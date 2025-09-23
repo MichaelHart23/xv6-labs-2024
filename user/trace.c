@@ -3,6 +3,7 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
+
 int
 main(int argc, char *argv[])
 {
@@ -24,6 +25,6 @@ main(int argc, char *argv[])
   }
   nargv[argc-2] = 0;
   exec(nargv[0], nargv);
-  printf("trace: exec failed\n");
+  printf("trace: exec failed\n");  //若是exec正常运行则它不会返回，这行代码也就不会被运行
   exit(0);
 }

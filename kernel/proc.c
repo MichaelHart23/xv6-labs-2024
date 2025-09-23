@@ -111,6 +111,8 @@ allocproc(void)
 {
   struct proc *p;
 
+
+
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
@@ -236,6 +238,8 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
+
+  p->mask = 0;//new added by myself. 初始化
   
   // allocate one user page and copy initcode's instructions
   // and data into it.
@@ -295,6 +299,8 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  np->mask = p->mask; //new added by myself
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);

@@ -14,20 +14,21 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+//该结构体应该是物理页4096bytes的开头部分，也就是说一个空闲物理页的前8个字节指向下一个物理页
 struct run {
   struct run *next;
 };
 
 struct {
   struct spinlock lock;
-  struct run *freelist;
+  struct run *freelist;  //指向空闲物理页链表的首个节点
 } kmem;
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
+  freerange(end, (void*)PHYSTOP); //把所有的物理内存页全部加入链表组织起来
 }
 
 

@@ -98,23 +98,23 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   if(va >= MAXVA)
     panic("walk");
 
-  for(int level = 2; level > 0; level--) {
-    pte_t *pte = &pagetable[PX(level, va)];
-    if(*pte & PTE_V) {
-      pagetable = (pagetable_t)PTE2PA(*pte);
+  for(int level = 2; level > 0; level--) { //循环两次，结束后定位到第三级，也及最后一级页表
+    pte_t *pte = &pagetable[PX(level, va)];//根据虚拟地址和页表层级获取对应的pte
+    if(*pte & PTE_V) { //若当前pte有效
+      pagetable = (pagetable_t)PTE2PA(*pte);//获取pte存的下一级页表的物理地址
 #ifdef LAB_PGTBL
       if(PTE_LEAF(*pte)) {
         return pte;
       }
 #endif
-    } else {
-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+    } else { //若pte无效
+      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0) //分配下一级页表
         return 0;
-      memset(pagetable, 0, PGSIZE);
-      *pte = PA2PTE(pagetable) | PTE_V;
+      memset(pagetable, 0, PGSIZE); //将新分配的页表内容初始化为0
+      *pte = PA2PTE(pagetable) | PTE_V; //将下一级页表的地址写入pte，并set vaild bit
     }
   }
-  return &pagetable[PX(0, va)];
+  return &pagetable[PX(0, va)]; //最终的物理地址所在的pte的地址
 }
 
 // Look up a virtual address, return the physical address,
@@ -174,13 +174,14 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   a = va;
   last = va + size - PGSIZE;
   for(;;){
-    if((pte = walk(pagetable, a, 1)) == 0)
+    if((pte = walk(pagetable, a, 1)) == 0) //获得页表项的地址
       return -1;
     if(*pte & PTE_V)
       panic("mappages: remap");
-    *pte = PA2PTE(pa) | perm | PTE_V;
+    *pte = PA2PTE(pa) | perm | PTE_V; //给页表项赋值
     if(a == last)
       break;
+    //切换到下一页
     a += PGSIZE;
     pa += PGSIZE;
   }
@@ -212,9 +213,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not a leaf");
     if(do_free){
       uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
+      kfree((void*)pa); //free physical page
     }
-    *pte = 0;
+    *pte = 0; //reset page table entry to zero
   }
 }
 

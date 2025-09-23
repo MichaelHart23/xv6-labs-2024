@@ -447,17 +447,17 @@ sys_exec(void)
     if(i >= NELEM(argv)){
       goto bad;
     }
-    if(fetchaddr(uargv+sizeof(uint64)*i, (uint64*)&uarg) < 0){
+    if(fetchaddr(uargv+sizeof(uint64)*i, (uint64*)&uarg) < 0){ //把exec第二个参数——指针数组中的一个个指针分别存到uarg
       goto bad;
     }
-    if(uarg == 0){
+    if(uarg == 0){ //指针数组到头了
       argv[i] = 0;
       break;
     }
-    argv[i] = kalloc();
+    argv[i] = kalloc(); //为什么要给每个字符串分配一个物理页
     if(argv[i] == 0)
       goto bad;
-    if(fetchstr(uarg, argv[i], PGSIZE) < 0)
+    if(fetchstr(uarg, argv[i], PGSIZE) < 0)//把各个字符串转存
       goto bad;
   }
 

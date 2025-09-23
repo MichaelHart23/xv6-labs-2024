@@ -1,0 +1,24 @@
+{
+    "files.associations": {
+        "exception": "c",
+        "memory_resource": "c",
+        "iosfwd": "c",
+        "new": "c",
+        "ostream": "c",
+        "stop_token": "c",
+        "streambuf": "c",
+        "array": "c",
+        "cmath": "c",
+        "deque": "c",
+        "string": "c",
+        "unordered_map": "c",
+        "vector": "c",
+        "functional": "c",
+        "string_view": "c",
+        "memory": "c",
+        "random": "c",
+        "initializer_list": "c",
+        "numeric": "c",
+        "utility": "c"
+    }
+}
