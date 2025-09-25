@@ -125,12 +125,20 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
-  // Allocate a trapframe page.
+  // Allocate a trapframe page. 所以它是物理地址吗？是的
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
   }
+
+  //分配存储pid的物理页
+  if((p->uspidpg = kalloc()) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  *((uint64*)p->uspidpg) = p->pid; //向物理页中写入该进程的pid
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -158,6 +166,12 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  //单独释放该页，因为之后的释放不会涉及到这里
+  if(p->uspidpg)
+    kfree(p->uspidpg);
+  p->uspidpg = 0;
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -201,6 +215,12 @@ proc_pagetable(struct proc *p)
     uvmfree(pagetable, 0);
     return 0;
   }
+  //映射存储pid的页
+  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)(p->uspidpg), PTE_R | PTE_U) < 0) {
+    uvmunmap(pagetable, USYSCALL, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
 
   return pagetable;
 }
@@ -212,6 +232,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0); //单独清理该页
   uvmfree(pagetable, sz);
 }
 
@@ -289,7 +310,7 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){ //此时不是copy on write
     freeproc(np);
     release(&np->lock);
     return -1;

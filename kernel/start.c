@@ -20,7 +20,7 @@ start()
   x |= MSTATUS_MPP_S;
   w_mstatus(x);
 
-  // set M Exception Program Counter to main, for mret.
+  // set M Exception Program Counter to main, for mret. 因为在mret指令的作用之一就是把epc的值放到pc中
   // requires gcc -mcmodel=medany
   w_mepc((uint64)main);
 

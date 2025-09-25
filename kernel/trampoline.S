@@ -45,7 +45,7 @@ uservec:
         sd t1, 80(a0)
         sd t2, 88(a0)
         sd s0, 96(a0)
-        sd s1, 104(a0)
+        sd s1, 104(a0)  # 112 for a0
         sd a1, 120(a0)
         sd a2, 128(a0)
         sd a3, 136(a0)

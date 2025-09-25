@@ -89,8 +89,12 @@ supercheck(uint64 s)
 {
   pte_t last_pte = 0;
 
+  /*
+  *  对所有L1页表项的对应的虚拟地址空间，检查这个地址空间里的所有页，看他们是否都能对应到同一个superpage的 L1 pte上
+  */
   for (uint64 p = s;  p < s + 512 * PGSIZE; p += PGSIZE) {
-    pte_t pte = (pte_t) pgpte((void *) p);
+    pte_t pte = (pte_t) pgpte((void *) p); 
+    //printf("error after pgpte and loop num: %ld\n", (p-s)/PGSIZE + 1);
     if(pte == 0)
       err("no pte");
     if ((uint64) last_pte != 0 && pte != last_pte) {
@@ -101,15 +105,19 @@ supercheck(uint64 s)
     }
     last_pte = pte;
   }
-
+  printf("loop end\n");
+  //修正：i < 512 -> i < 512 * PGSIZE
   for(int i = 0; i < 512; i += PGSIZE){
+    printf("in write loop\n");
     *(int*)(s+i) = i;
   }
 
   for(int i = 0; i < 512; i += PGSIZE){
+    printf("in read loop\n");
     if(*(int*)(s+i) != i)
       err("wrong value");
   }
+  printf("super check end\n");
 }
 
 void
@@ -124,11 +132,20 @@ superpg_test()
   if (end == 0 || end == (char*)0xffffffffffffffff)
     err("sbrk failed");
   
+  printf("end: %p\n", end);
+  
   uint64 s = SUPERPGROUNDUP((uint64) end);
+
+  printf("s: %p\n", (void*)s);
+  
   supercheck(s);
+
+  printf("control after first supercheck and before fork\n");
+
   if((pid = fork()) < 0) {
     err("fork");
   } else if(pid == 0) {
+    
     supercheck(s);
     exit(0);
   } else {
