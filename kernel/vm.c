@@ -323,6 +323,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
   if(newsz > s) {
     n = (newsz - s) / SUPERPGSIZE;
   }
+  if(n > 32) n = 32;
   if(n > 0) {
     sz = SUPERPGSIZE;
     for(uint64 start = s; start < s + n * SUPERPGSIZE; start += SUPERPGSIZE) {
@@ -597,21 +598,21 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 void
 vmprint(pagetable_t pagetable) {
   printf("page table %p\n", pagetable);
-  uint64* va = 0;
-  for(int i = 0; i < 512; i++) {
+  uint64 va = 0;
+  for(uint64 i = 0; i < 512; i++) {
     if(pagetable[i] & PTE_V) {
       pte_t pte_leve1_1 = pagetable[i];
       pagetable_t pagetable_1= (pagetable_t)PTE2PA(pte_leve1_1);
-      printf(".. %p: pte %p pa %p\n", va, (uint64*)pte_leve1_1, pagetable_1);
-      for(int j = 0; j < 512; j++) {
+      printf(" ..%p: pte %p pa %p\n", (void*)va, (uint64*)pte_leve1_1, pagetable_1);
+      for(uint64 j = 0; j < 512; j++) {
         if(pagetable_1[j] & PTE_V) {
           pte_t pte_level_2 = pagetable_1[j];
           pagetable_t pagetable_2= (pagetable_t)PTE2PA(pte_level_2);
-          printf(".. .. %p: pte %p pa %p\n", va, (uint64*)pte_level_2, pagetable_2);
-          for(int k = 0; k < 512; k++) {
+          printf(" .. ..%p: pte %p pa %p\n", (void*)va, (uint64*)pte_level_2, pagetable_2);
+          for(uint64 k = 0; k < 512; k++) {
             if(pagetable_2[k] & PTE_V) {
               pte_t pte_level_3 = pagetable_2[k];
-              printf(".. .. ..%p: pte %p pa %p\n", va, (uint64*)pte_level_3, (uint64*)PTE2PA(pte_level_3));
+              printf(" .. .. ..%p: pte %p pa %p\n", (void*)va, (uint64*)pte_level_3, (uint64*)PTE2PA(pte_level_3));
             }
             va += 4096;
           }

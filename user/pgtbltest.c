@@ -10,7 +10,7 @@ void print_pgtbl();
 void print_kpgtbl();
 void ugetpid_test();
 void superpg_test();
-
+void sbrkmuch(char*);
 int
 main(int argc, char *argv[])
 {
@@ -18,6 +18,8 @@ main(int argc, char *argv[])
   ugetpid_test();
   print_kpgtbl();
   superpg_test();
+  //sbrkmuch("sbrkmuch");
+
   printf("pgtbltest: all tests succeeded\n");
   exit(0);
 }
@@ -105,19 +107,19 @@ supercheck(uint64 s)
     }
     last_pte = pte;
   }
-  printf("loop end\n");
+  //printf("loop end\n");
   //修正：i < 512 -> i < 512 * PGSIZE
   for(int i = 0; i < 512; i += PGSIZE){
-    printf("in write loop\n");
+    //printf("in write loop\n");
     *(int*)(s+i) = i;
   }
 
   for(int i = 0; i < 512; i += PGSIZE){
-    printf("in read loop\n");
+    //printf("in read loop\n");
     if(*(int*)(s+i) != i)
       err("wrong value");
   }
-  printf("super check end\n");
+  //printf("super check end\n");
 }
 
 void
@@ -132,15 +134,15 @@ superpg_test()
   if (end == 0 || end == (char*)0xffffffffffffffff)
     err("sbrk failed");
   
-  printf("end: %p\n", end);
+  //printf("end: %p\n", end);
   
   uint64 s = SUPERPGROUNDUP((uint64) end);
 
-  printf("s: %p\n", (void*)s);
+  //printf("s: %p\n", (void*)s);
   
   supercheck(s);
 
-  printf("control after first supercheck and before fork\n");
+  //printf("control after first supercheck and before fork\n");
 
   if((pid = fork()) < 0) {
     err("fork");
@@ -156,4 +158,64 @@ superpg_test()
     }
   }
   printf("superpg_test: OK\n");  
+}
+
+void
+sbrkmuch(char *s)
+{
+  enum { BIG=100*1024*1024 };
+  char *c, *oldbrk, *a, *lastaddr, *p;
+  uint64 amt;
+
+  oldbrk = sbrk(0);
+
+  // can one grow address space to something big?
+  a = sbrk(0);
+  amt = BIG - (uint64)a;
+  p = sbrk(amt);
+  if (p != a) {
+    printf("%s: sbrk test failed to grow big address space; enough phys mem?\n", s);
+    exit(1);
+  }
+
+  // touch each page to make sure it exists.
+  char *eee = sbrk(0);
+  for(char *pp = a; pp < eee; pp += 4096)
+    *pp = 1;
+
+  lastaddr = (char*) (BIG-1);
+  *lastaddr = 99;
+
+  // can one de-allocate?
+  a = sbrk(0);
+  c = sbrk(-PGSIZE);
+  if(c == (char*)0xffffffffffffffffL){
+    printf("%s: sbrk could not deallocate\n", s);
+    exit(1);
+  }
+  c = sbrk(0);
+  if(c != a - PGSIZE){
+    printf("%s: sbrk deallocation produced wrong address, a %p c %p\n", s, a, c);
+    exit(1);
+  }
+
+  // can one re-allocate that page?
+  a = sbrk(0);
+  c = sbrk(PGSIZE);
+  if(c != a || sbrk(0) != a + PGSIZE){
+    printf("%s: sbrk re-allocation failed, a %p c %p\n", s, a, c);
+    exit(1);
+  }
+  if(*lastaddr == 99){
+    // should be zero
+    printf("%s: sbrk de-allocation didn't really deallocate\n", s);
+    exit(1);
+  }
+
+  a = sbrk(0);
+  c = sbrk(-(sbrk(0) - oldbrk));
+  if(c != a){
+    printf("%s: sbrk downsize failed, a %p c %p\n", s, a, c);
+    exit(1);
+  }
 }

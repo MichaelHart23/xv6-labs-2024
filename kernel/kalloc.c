@@ -25,7 +25,7 @@ struct {
   struct run *superpage_list;  //superpage的开头
 } kmem;
 
-#define SPSTART (PHYSTOP-8*SUPERPGSIZE)      //superpage开始的地址
+#define SPSTART (PHYSTOP-32*SUPERPGSIZE)      //superpage开始的地址
 
 void 
 kinit()
