@@ -54,6 +54,8 @@ sys_sleep(void)
   int n;
   uint ticks0;
 
+  backtrace();
+
   argint(0, &n);
   if(n < 0)
     n = 0;
@@ -90,4 +92,22 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_sigalarm(void) {
+  struct proc* p = myproc();
+  argint(0, &p->alarmticks);
+  argaddr(1, &p->alarm_handler);
+  return 0;
+}
+
+uint64
+sys_sigreturn(void) {
+  struct proc *p = myproc();
+  p->handling = 0;
+  //仅恢复32个寄存器，其他的不变
+  p->trapframe->epc = p->tf_to_restore.epc;  
+  memmove(((void*)p->trapframe)+40, ((void*)&p->tf_to_restore) + 40, 248);
+  return p->trapframe->a0;
 }

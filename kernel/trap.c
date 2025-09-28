@@ -77,8 +77,20 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2) {
+    if(p->alarmticks > 0) { //alarm处于激活状态
+      if(!p->handling) {    //当前不是从handler过来的, 保证不在handler的执行过程中触发handler
+        p->tickscount++;
+        if(p->tickscount >= p->alarmticks) {
+          p->tickscount = 0;
+          p->handling = 1;
+          p->tf_to_restore = *p->trapframe; 
+          p->trapframe->epc = p->alarm_handler;
+        }
+      }
+    }
     yield();
+  }
 
   usertrapret();
 }
