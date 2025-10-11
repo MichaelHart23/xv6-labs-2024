@@ -67,6 +67,31 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 15) { // store page fault
+    struct proc *p = myproc();
+    pte_t *pte = 0;
+    uint64 va = (uint64)r_stval();
+    if(va < MAXVA) {
+      pte = walk(p->pagetable, va, 0);
+    }
+    if(pte == 0 || (*pte & PTE_V) == 0) {
+      printf("page fault: invalid address\n");
+      setkilled(p);
+    }
+    else {
+      uint64 flags = PTE_FLAGS(*pte);
+      if(flags & PTE_COW) {
+        //printf("COW fault pid=%d va=%p pte=%p\n", p->pid, (void*)va, pte);
+        if(copy_on_write(pte) == -1){
+          printf("no free memory\n");
+          setkilled(p);
+        }
+      }
+      else{ //write to the page that originly read-only
+        //printf("write to the page that originly read-only\n");
+        setkilled(p);
+      }
+    }
   } else {
     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());

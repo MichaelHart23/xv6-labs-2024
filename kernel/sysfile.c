@@ -248,9 +248,9 @@ create(char *path, short type, short major, short minor)
   struct inode *ip, *dp;
   char name[DIRSIZ];
 
-  if((dp = nameiparent(path, name)) == 0)
+  if((dp = nameiparent(path, name)) == 0) {
     return 0;
-
+  }
   ilock(dp);
 
   if((ip = dirlookup(dp, name, 0)) != 0){
