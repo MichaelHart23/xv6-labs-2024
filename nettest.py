@@ -165,5 +165,7 @@ elif sys.argv[1] == "grade":
     while True:
         buf, raddr = sock.recvfrom(4096)
         sock.sendto(buf, raddr)
+        #print(buf)
+        #print(len(buf))
 else:
     usage()

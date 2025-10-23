@@ -940,12 +940,15 @@ main(int argc, char *argv[])
       printf("free: FAILED -- lost too many free pages %d (out of %d)\n", free1, free0);
     } else {
       printf("free: OK\n");
+      printf("free pages %d (out of %d)\n", free1, free0);
     }
   } else if(strcmp(argv[1], "dns") == 0){
     dns();
   } else {
     usage();
   }
+
+  //memory_check();
 
   exit(0);
 }
