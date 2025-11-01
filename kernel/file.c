@@ -26,8 +26,8 @@ fileinit(void)
 }
 
 // Allocate a file structure.
-struct file*
-filealloc(void)
+// 这个函数好像啥也没分配，连inode都没分配，仅仅就是占用了file table中的一个位置，并设置ref为1
+struct file* filealloc(void)
 {
   struct file *f;
 

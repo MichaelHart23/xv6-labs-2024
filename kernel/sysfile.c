@@ -136,7 +136,7 @@ sys_link(void)
   }
 
   ilock(ip);
-  if(ip->type == T_DIR){
+  if(ip->type == T_DIR){ //old 路径指定的不是directory
     iunlockput(ip);
     end_op();
     return -1;
@@ -146,7 +146,7 @@ sys_link(void)
   iupdate(ip);
   iunlock(ip);
 
-  if((dp = nameiparent(new, name)) == 0)
+  if((dp = nameiparent(new, name)) == 0) //获取该文件的父目录对应的inode，此时new路径的文件名已经被存到了name中
     goto bad;
   ilock(dp);
   if(dp->dev != ip->dev || dirlink(dp, name, ip->inum) < 0){
@@ -185,6 +185,7 @@ isdirempty(struct inode *dp)
   return 1;
 }
 
+//unlink相当于把该路径下的文件删除了，通过删除目录下inode中对应dirent的方式
 uint64
 sys_unlink(void)
 {
@@ -197,7 +198,7 @@ sys_unlink(void)
     return -1;
 
   begin_op();
-  if((dp = nameiparent(path, name)) == 0){
+  if((dp = nameiparent(path, name)) == 0){ //dp为文件父目录的inode，name为文件名
     end_op();
     return -1;
   }
@@ -208,7 +209,7 @@ sys_unlink(void)
   if(namecmp(name, ".") == 0 || namecmp(name, "..") == 0)
     goto bad;
 
-  if((ip = dirlookup(dp, name, &off)) == 0)
+  if((ip = dirlookup(dp, name, &off)) == 0) //看该目录中是否有这个文件名，并返回其inode
     goto bad;
   ilock(ip);
 
@@ -220,7 +221,7 @@ sys_unlink(void)
   }
 
   memset(&de, 0, sizeof(de));
-  if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
+  if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de)) //将置空的dirent写入对应的目录项
     panic("unlink: writei");
   if(ip->type == T_DIR){
     dp->nlink--;
@@ -242,6 +243,8 @@ bad:
   return -1;
 }
 
+//从path中解析出文件名，并创建一个该名字的文件，指定type，major，minor, 并返回该inode，若文件已存在，直接返回inode
+//返回的inode时ilock的，需要调用者自己iunlock
 static struct inode*
 create(char *path, short type, short major, short minor)
 {
@@ -253,7 +256,7 @@ create(char *path, short type, short major, short minor)
 
   ilock(dp);
 
-  if((ip = dirlookup(dp, name, 0)) != 0){
+  if((ip = dirlookup(dp, name, 0)) != 0){ //该文件名已经存在
     iunlockput(dp);
     ilock(ip);
     if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
@@ -262,7 +265,7 @@ create(char *path, short type, short major, short minor)
     return 0;
   }
 
-  if((ip = ialloc(dp->dev, type)) == 0){
+  if((ip = ialloc(dp->dev, type)) == 0){ //给该文件分配inode
     iunlockput(dp);
     return 0;
   }
@@ -273,7 +276,7 @@ create(char *path, short type, short major, short minor)
   ip->nlink = 1;
   iupdate(ip);
 
-  if(type == T_DIR){  // Create . and .. entries.
+  if(type == T_DIR){  // Create . and .. entries. 为该目录的 . 和 .. 项建立连接
     // No ip->nlink++ for ".": avoid cyclic ref count.
     if(dirlink(ip, ".", ip->inum) < 0 || dirlink(ip, "..", dp->inum) < 0)
       goto fail;
@@ -282,7 +285,7 @@ create(char *path, short type, short major, short minor)
   if(dirlink(dp, name, ip->inum) < 0)
     goto fail;
 
-  if(type == T_DIR){
+  if(type == T_DIR){ //若是创建的是directory，则该目录的 .. 项指向了其父目录，也就是dp，增加其父目录的nlink
     // now that success is guaranteed:
     dp->nlink++;  // for ".."
     iupdate(dp);
@@ -304,11 +307,11 @@ create(char *path, short type, short major, short minor)
 uint64
 sys_open(void)
 {
-  char path[MAXPATH];
+  char path[MAXPATH], target_path[MAXPATH];
   int fd, omode;
   struct file *f;
-  struct inode *ip;
-  int n;
+  struct inode *ip, *ip2 = 0;
+  int n, len_target, off = 0;
 
   argint(1, &omode);
   if((n = argstr(0, path, MAXPATH)) < 0)
@@ -333,6 +336,48 @@ sys_open(void)
       end_op();
       return -1;
     }
+    if(ip->type != T_SYMLINK && omode == O_NOFOLLOW) { //不是symlink型的但设置了O_NOFOLLOW标签
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) { //设置了O_NOFOLLOW的symlink可以按照原来的逻辑顺畅处理
+    int times = 0;
+    while(ip->type == T_SYMLINK && times < 10) {
+      if(ip2) iunlockput(ip2);
+      if((off = readi(ip,0,(uint64)&len_target, 0, sizeof(int))) < 0) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      //printf("sys_open: read len susccessful: %d\n", len_target);
+      if(readi(ip,0,(uint64)target_path, off, len_target) < 0) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      //printf("sys_open: read path susccessful: %s\n", target_path);
+      if((ip2 = namei(target_path)) == 0) { //软链接指向的文件找不到
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      ilock(ip2);
+
+      //使得ip指向target file，这样之后的代码就不用更改了，直接完成了对ip的处理
+      struct inode* temp = ip2;
+      ip2 = ip;
+      ip = temp;
+      times++;
+    }
+    iunlockput(ip2); //symlink对应的inode，之后用不到了，unlock and iput
+    if(times >= 10) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
@@ -341,13 +386,14 @@ sys_open(void)
     return -1;
   }
 
-  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
+  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){ //分配ftable的位置与fd
     if(f)
       fileclose(f);
     iunlockput(ip);
     end_op();
     return -1;
   }
+
 
   if(ip->type == T_DEVICE){
     f->type = FD_DEVICE;
@@ -364,7 +410,7 @@ sys_open(void)
     itrunc(ip);
   }
 
-  iunlock(ip);
+  iunlock(ip); //ip正在被struct file f持有，所以不能iput
   end_op();
 
   return fd;
@@ -501,5 +547,44 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64 sys_symlink(void) {
+  char target_path[MAXPATH] = {0}, symlink_path[MAXPATH] = {0};
+  struct inode* ip;
+  int len_target, len_symlink;
+  int off;
+  if((len_target = argstr(0, target_path, MAXPATH)) < 0) return -1;
+  if((len_symlink = argstr(1, symlink_path, MAXPATH)) < 0) return -1;
+
+  begin_op();
+  if((ip = create(symlink_path, T_SYMLINK, 0, 0)) == 0) {
+    end_op();
+    return -1;
+  }
+  if((off = writei(ip,0,(uint64)&len_target, 0, sizeof(int))) < 0) { //向前四个字节写入字符串的长度
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  //printf("sys_symlink: write target len: %d\n", len_target);
+  if(writei(ip, 0, (uint64)target_path, off, len_target) < 0) { //写入字符串本身
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  //printf("sys_symlink: write target path: %s\n", target_path);
+
+  //似乎不必在这里就创建出文件，完全可以等到open时再创建
+  // if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){ //分配ftable的位置与fd
+  //   if(f)
+  //     fileclose(f);
+  //   iunlockput(ip);
+  //   end_op();
+  //   return -1;
+  // }
+  iunlockput(ip);
+  end_op();
   return 0;
 }

@@ -33,15 +33,19 @@
 // Contents of the header block, used for both the on-disk header block
 // and to keep track in memory of logged block# before commit.
 struct logheader {
-  int n;
-  int block[LOGSIZE];
+  int n;               //几个block被修改了
+  int block[LOGSIZE];  //被修改的块的编号，即blockno
 };
 
 struct log {
   struct spinlock lock;
-  int start;
-  int size;
-  int outstanding; // how many FS sys calls are executing.
+  int start;    //日志起始位置的block编号——blockno
+  int size;     //日志区域大小(块数)
+  int outstanding; // how many FS sys calls are executing.有几个系统调用**正在**写, 该字段因并发而存在
+  // 此字段即表示有几个正在向log层写，且没写完的syscall
+  // 另外，一个系统调用可能会写多个block，log系统认为每个系统调用都写了MAXOPBLOCKS个block
+  // 于是log层给正在向log层写，且没写完的syscall预留的空间就是outstanding * MAXOPBLOCKS
+
   int committing;  // in commit(), please wait.
   int dev;
   struct logheader lh;
@@ -65,6 +69,7 @@ initlog(int dev, struct superblock *sb)
 }
 
 // Copy committed blocks from log to their home location
+// 把数据从磁盘的log区真正复制到磁盘中存放该数据的位置
 static void
 install_trans(int recovering)
 {
@@ -76,7 +81,7 @@ install_trans(int recovering)
     memmove(dbuf->data, lbuf->data, BSIZE);  // copy block to dst
     bwrite(dbuf);  // write dst to disk
     if(recovering == 0)
-      bunpin(dbuf);
+      bunpin(dbuf);  //在log_write中pin的，而若是正在recovering，则对一个block的写操作并没有在buffer cache中记录报错，也就没有pin
     brelse(lbuf);
     brelse(dbuf);
   }
@@ -99,16 +104,20 @@ read_head(void)
 // Write in-memory log header to disk.
 // This is the true point at which the
 // current transaction commits.
+// 将日志头写入磁盘的log区。 这是提交点（commit point），如果系统在这次写入后崩溃，
+// 那么恢复（recovery）时会重新执行日志中的写入操作，从而replay整个事务。
 static void
 write_head(void)
 {
-  struct buf *buf = bread(log.dev, log.start);
-  struct logheader *hb = (struct logheader *) (buf->data);
+  struct buf *buf = bread(log.dev, log.start); //磁盘log区的第一个block是存放log header的
+  struct logheader *hb = (struct logheader *) (buf->data); //指针转换
   int i;
+  //数据复制
   hb->n = log.lh.n;
   for (i = 0; i < log.lh.n; i++) {
     hb->block[i] = log.lh.block[i];
   }
+  //写入磁盘
   bwrite(buf);
   brelse(buf);
 }
@@ -119,7 +128,7 @@ recover_from_log(void)
   read_head();
   install_trans(1); // if committed, copy from log to disk
   log.lh.n = 0;
-  write_head(); // clear the log
+  write_head(); // clear the log 即把n字段清零log header写回磁盘log区
 }
 
 // called at the start of each FS system call.
@@ -134,7 +143,7 @@ begin_op(void)
       // this op might exhaust log space; wait for commit.
       sleep(&log, &log.lock);
     } else {
-      log.outstanding += 1;
+      log.outstanding += 1; //正在向log层写的syscall数量加一
       release(&log.lock);
       break;
     }
@@ -149,10 +158,10 @@ end_op(void)
   int do_commit = 0;
 
   acquire(&log.lock);
-  log.outstanding -= 1;
+  log.outstanding -= 1; //一个syscall向log层的写操作完成了
   if(log.committing)
     panic("log.committing");
-  if(log.outstanding == 0){
+  if(log.outstanding == 0){ //没有正在向log层写的syscall了，于是准备commit
     do_commit = 1;
     log.committing = 1;
   } else {
@@ -175,12 +184,14 @@ end_op(void)
 }
 
 // Copy modified blocks from cache to log.
+// 将只在内存(Buffer Cache)修改的block复制到disk的log区
 static void
 write_log(void)
 {
   int tail;
 
   for (tail = 0; tail < log.lh.n; tail++) {
+    //磁盘log区的第一个blockno是存放log header的，所以此处有“+1”，并空出start对应的block
     struct buf *to = bread(log.dev, log.start+tail+1); // log block
     struct buf *from = bread(log.dev, log.lh.block[tail]); // cache block
     memmove(to->data, from->data, BSIZE);
@@ -223,13 +234,13 @@ log_write(struct buf *b)
     panic("log_write outside of trans");
 
   for (i = 0; i < log.lh.n; i++) {
-    if (log.lh.block[i] == b->blockno)   // log absorption
-      break;
+    if (log.lh.block[i] == b->blockno)   // log absorption：合并写到同一个block的多个写操作
+      break;                            //此处的逻辑是该block已经在要更新的block数组里了，就break
   }
   log.lh.block[i] = b->blockno;
-  if (i == log.lh.n) {  // Add new block to log?
-    bpin(b);
-    log.lh.n++;
+  if (i == log.lh.n) {  // Add new block to log?  上个循环是正常结束还是break掉的
+    bpin(b);            //增加该buf的引用计数，防止被逐出cache buffer，一是为了保证之后的向磁盘中写数据的操作，二是保证从该磁盘block读数据的一致性
+    log.lh.n++;         // 为什么pin？因为该block已经被写了，在向磁盘中同步修改之前不能逐出cache buffer
   }
   release(&log.lock);
 }
