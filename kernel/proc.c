@@ -5,6 +5,12 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+
 
 struct cpu cpus[NCPU];
 
@@ -145,6 +151,10 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+  for(int i = 0; i < MAX_VMA; i++) { //初始化mmap_infos数组
+    p->mmap_infos[i].valid = 0;
+  }
 
   return p;
 }
@@ -322,6 +332,20 @@ fork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  for(int i = 0; i < MAX_VMA; i++) {
+    if(p->mmap_infos[i].valid) {
+      struct mmap_info* m0 = &p->mmap_infos[i];
+      struct mmap_info* m = &np->mmap_infos[i];
+      m->valid = 1;
+      m->start_addr = m0->start_addr;
+      m->len = m0->len;
+      m->offset = m0->offset;
+      m->prot = m0->prot;
+      m->flags = m0->flags;
+      m->mapped_file = filedup(m0->mapped_file);
+    }
+  }
+
   return pid;
 }
 
@@ -347,9 +371,20 @@ void
 exit(int status)
 {
   struct proc *p = myproc();
+  struct mmap_info* m;
 
   if(p == initproc)
     panic("init exiting");
+
+  for(m = p->mmap_infos; m < p->mmap_infos + MAX_VMA; m++) {
+    if(m->valid) {
+      uint64 remain_size = m->mapped_file->ip->size - m->offset; //从当前m->start_addr到文件结束有多少字节
+      uint64 len = m->len > remain_size ? remain_size : m->len;
+      munmap(p->pagetable, m, m->start_addr, len);
+      fileclose(m->mapped_file);
+      m->valid = 0;
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
@@ -693,3 +728,117 @@ procdump(void)
     printf("\n");
   }
 }
+
+// 判断是否是被mmap的地址，若是返回其再mmap_infos数组中的index，若不是，返回-1
+int is_mapped_va(struct proc* p, uint64 va) {
+  struct mmap_info* m;
+  int i;
+  for(m = p->mmap_infos, i = 0; m < p->mmap_infos + MAX_VMA; m++, i++) {
+    if(m->valid && va >= m->start_addr && va < m->start_addr + m->len) {
+      //printf("is_mapped_va: va: %p\n", (void*)va);
+      //printf("is_mapped_va: m->start_add: %p\n", (void*)m->start_addr);
+      //printf("is_mapped_va: m->len: %p\n", (void*)m->len); 
+      return i;
+    }
+  }
+  return -1;
+}
+
+// 判断scause表示的操作是否合法，合法返回1，否则返回0
+int is_prot_allow(struct mmap_info* m, uint64 scause) {
+  if(scause == 13 && m->prot & PROT_READ) return 1;
+  if(scause == 15 && m->prot & PROT_WRITE) return 1;
+  return 0;
+}
+
+// 为该虚拟地址处在的虚拟页分配一个物理页, 并读取文件信息, 返回读取到的字节，若错误返回-1
+int map_file(struct proc* p, int index, uint64 va) {
+  uint64 pa;
+  pte_t* pte;
+  struct mmap_info* m = &p->mmap_infos[index];
+  struct file* f = m->mapped_file;
+  int r = 0, perm = 0;
+
+  if(f->readable == 0)
+    return -1;
+
+  if(f->type == FD_PIPE){
+    return -1;
+  } else if(f->type == FD_DEVICE){
+    return -1;
+  } else if(f->type == FD_INODE){
+    if((pa = (uint64)kalloc()) == 0)
+      return -1;
+    //printf("map_file: kalloc successful\n");
+    ilock(f->ip);
+    r = readi(f->ip, 0, pa, PGROUNDDOWN(va - m->start_addr), PGSIZE);
+    iunlock(f->ip);
+    //printf("read inode successful for %d bytes\n", r);
+  } else {
+    panic("map_file: unknown type of fd");
+  }
+  printf("map_file: %d bytes writen to page\n", r);
+  //文件已经读完了，但必须整页整页的分配，把分配的物理页中超出len的部分设为0
+  //已经mmap原本就指定了超出文件原本大小的len，那超出的部分在内存中也置零，并不得写回文件
+  if(r < PGSIZE) {
+    memset((void*)(pa + r), 0, PGSIZE - r);
+  }
+  if((pte = walk(p->pagetable, va, 1)) == 0) 
+    return -1;
+  perm = PTE_V | PTE_U;
+  if(m->prot & PROT_READ) perm |= PTE_R;
+  if(m->prot & PROT_WRITE) perm |= PTE_W;
+  if(m->prot & PROT_EXEC) perm |= PTE_X;
+  *pte = PA2PTE(pa) | perm;
+  sfence_vma();
+  return r;
+}
+
+// 对mmap_info的传入的地址空间进行unmap，如果内容并修改并MAP_SHARED被设置，则写回
+int munmap(pagetable_t pagetable, struct mmap_info* m, uint64 start_va, uint64 len) {
+  uint64 va, pa, r;
+  pte_t* pte;
+  struct file* f = m->mapped_file;
+  printf("munmap: the len is: %ld\n", len);
+  uint64 off = m->offset + (start_va - m->start_addr); //从文件的什么位置开始写
+
+  //该函数在调用前就已经保证了start_va 和 len 指定的虚拟空间范围是合法的, 也即是不会超过文件大小
+  for(va = start_va; va < start_va + len; va += PGSIZE) {
+    //若是某一页还没有map，那就不unmap
+    if((pte = walk(pagetable, va, 0)) == 0 || *pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) { //该物理页未分配
+      continue;
+    }
+       
+    pa = PTE2PA(*pte);
+    //printf("munmap: the pa is %p\n", (void*)pa);
+    if((m->flags & MAP_SHARED) && *pte & PTE_D) {
+      int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+      int i = 0;
+      uint64 remain_size = len - (va-start_va); //总共还剩下多少字节没写
+      uint64 write_size = remain_size < PGSIZE ? remain_size : PGSIZE; //这一波要写入多少字节，写入一整页可能超出文件
+      while(i < write_size){
+        int n1 = write_size - i; //在这一轮写入中，还剩下多少bytes没有写入
+        if(n1 > max)
+          n1 = max;
+        begin_op();
+        ilock(f->ip);
+        if ((r = writei(f->ip, 0, pa + i, off, n1)) > 0)
+          off += r;
+        iunlock(f->ip);
+        end_op();
+        printf("writen to the disk: %ld bytes\n", r);
+        printf("off is %ld\n", off);
+
+        if(r != n1){
+          // error from writei
+          break;
+        }
+        i += r;
+      }
+    }
+    kfree((void*)pa);
+    *pte = 0;
+  }
+  return 1;
+}
+

@@ -503,3 +503,81 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 sys_mmap(void) {
+  //printf("sys_mmap called\n");
+  uint64 len;
+  int flags, prot, fd, i;
+  struct proc* p;
+  struct mmap_info* m;
+  uint64 offset;
+  argaddr(1, &len);
+  argint(2, &prot);
+  argint(3, &flags);
+  argint(4, &fd);
+  argaddr(5, &offset);
+  
+
+  if(fd < 0 || fd >= NOFILE) return -1;
+  if(len == 0) return -1;
+  p = myproc();
+  struct file* f = p->ofile[fd];
+  if(f == 0) return -1;
+  if(f->type == FD_DEVICE || f->type == FD_PIPE || f->type == FD_NONE) return -1;
+  if(!f->readable && (prot & PROT_READ)) return -1;
+  if(flags & MAP_SHARED) {
+    if(!f->writable && (prot & PROT_WRITE)) return -1;
+  }
+  for(m = p->mmap_infos, i = 0; m < p->mmap_infos + MAX_VMA; m++, i++) {
+    if(!m->valid) {
+      m->valid = 1;
+      m->len = len;
+      m->offset = offset;
+      m->prot = prot;
+      m->flags = flags;
+      m->mapped_file = filedup(f);
+      //给heap流出足够的增长空间，同时尽量分隔不同mmap区域的地址，防止不同的mmap之间的地址交叠
+      m->start_addr = PGROUNDUP(p->sz) + (1ul << 30)*(2*i + 1);
+      printf("sys_mmap: found a unvalid mmap_info for index %d\n", i);
+      return m->start_addr;
+    }
+  }
+  return -1; //mmap_infos已经满了
+}
+
+uint64 sys_munmap(void) {
+  uint64 va, len;
+  uint64 max_len, file_size;
+  struct proc* p;
+  struct mmap_info* m;
+  int index;
+  argaddr(0, &va);
+  argaddr(1, &len);
+  p = myproc();
+  if((index = is_mapped_va(p, va)) == -1) return -1; //不在mapped file的va空间内
+  m = &p->mmap_infos[index];
+
+  if(va < m->start_addr || va >= m->start_addr + m->len || va + len > m->start_addr + m->len) //范围检查
+    return -1;
+  if(va != PGROUNDDOWN(va) || len != PGROUNDDOWN(len)) //对齐检查
+    return -1;
+  file_size = m->mapped_file->ip->size;
+  uint64 remain_file_size = file_size - m->offset;
+  uint64 file_end = m->start_addr + remain_file_size;
+  //保证其指定的虚拟空间范围不超过文件大小，主要就是防止把超出文件原本大小的内容写入文件
+  if(va < file_end) {
+    max_len = va + len > file_end ? file_end - va : len; 
+    munmap(p->pagetable, m, va, max_len);
+  }
+  
+  if(va == m->start_addr) {
+    m->start_addr = va + len; //start addr已经改变了，不同用start来判断是否超出文件大小了
+    m->offset += len;
+  }
+  m->len -= len; 
+  if(m->len == 0) {
+    fileclose(m->mapped_file);
+    m->valid = 0;
+  }
+  return 0;
+}

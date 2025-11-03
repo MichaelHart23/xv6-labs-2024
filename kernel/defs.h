@@ -7,6 +7,7 @@ struct context;
 struct file;
 struct inode;
 struct pipe;
+struct mmap_info;
 struct proc;
 struct spinlock;
 struct sleeplock;
@@ -110,6 +111,10 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+int             is_mapped_va(struct proc* p, uint64 va);
+int             map_file(struct proc* p, int index, uint64 va);
+int             is_prot_allow(struct mmap_info* m, uint64 scause);
+int             munmap(pagetable_t pagetable, struct mmap_info* m, uint64 start_va, uint64 len);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

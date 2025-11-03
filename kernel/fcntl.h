@@ -3,7 +3,6 @@
 #define O_RDWR    0x002
 #define O_CREATE  0x200
 #define O_TRUNC   0x400
-
 #ifdef LAB_MMAP
 #define PROT_NONE       0x0
 #define PROT_READ       0x1

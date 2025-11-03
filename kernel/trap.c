@@ -65,6 +65,29 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 13 || r_scause() == 15) {
+    printf("usertrap: enter trap for scause: %ld; va: %p for pid: %d\n", r_scause(), (void*)r_stval(), p->pid);
+    int index;
+    uint64 va = r_stval(), cause = r_scause();
+    if(va > MAXVA) {
+      setkilled(p);
+      goto endif;
+    }
+    if((index = is_mapped_va(p, va)) == -1) {
+      printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+      setkilled(p);
+      goto endif;
+    }
+    printf("usertrap: get the index: %d\n", index);
+    if(!is_prot_allow(&p->mmap_infos[index], cause)) {
+      printf("usertrap(): mmaped file's store or load protection is not allowed scause 0x%lx pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+      setkilled(p);
+      goto endif;
+    }
+    //printf("usertrap: protection allow\n");
+    map_file(p, index, va);
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -72,7 +95,7 @@ usertrap(void)
     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
     setkilled(p);
   }
-
+endif:
   if(killed(p))
     exit(-1);
 

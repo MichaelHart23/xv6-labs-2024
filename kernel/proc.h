@@ -81,6 +81,17 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+#define MAX_VMA 16
+struct mmap_info {
+  int valid;
+  uint64 start_addr;
+  uint64 len;
+  uint64 offset; //当前在虚拟地址空间中map的文件内容是从文件的第几个字节开始的开始的
+  int flags;
+  int prot;
+  struct file* mapped_file;
+};
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -104,4 +115,5 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  struct mmap_info mmap_infos[MAX_VMA];
 };

@@ -36,8 +36,10 @@ err(char *why)
 void
 _v1(char *p)
 {
+  //printf("enter function _v1\n");
   int i;
   for (i = 0; i < PGSIZE*2; i++) {
+    //printf("loop times %d\n", i);
     if (i < PGSIZE + (PGSIZE/2)) {
       if (p[i] != 'A') {
         printf("mismatch at %d, wanted 'A', got 0x%x\n", i, p[i]);
@@ -111,6 +113,7 @@ mmap_test(void)
   char *p = mmap(0, PGSIZE*2, PROT_READ, MAP_PRIVATE, fd, 0);
   if (p == MAP_FAILED)
     err("mmap (1)");
+  printf("mmaptest: the va for mmap is %p\n", p);
   _v1(p);
   if (munmap(p, PGSIZE*2) == -1)
     err("munmap (1)");
