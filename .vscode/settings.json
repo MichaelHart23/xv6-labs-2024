@@ -1,6 +1,0 @@
-{
-    "files.associations": {
-        "string_view": "c",
-        "sleeplock.h": "c"
-    }
-}
